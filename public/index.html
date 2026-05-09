@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>TACTICAL OPS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span id="title">TACTICAL OPS</span>
+      <span id="statusText">PLANNING</span>
+    </header>
+
+    <div id="gameContainer">
+      <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="controls">
+      <button id="btnExecute" class="btn execute">EXECUTE</button>
+      <button id="btnClear"   class="btn clear">CLEAR</button>
+      <button id="btnReset"   class="btn reset">RESET</button>
+      <button id="btnDebug"   class="btn debug">DEBUG</button>
+    </div>
+
+    <p id="hint">TAP MAP → place waypoints &nbsp;|&nbsp; EXECUTE → run mission</p>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
