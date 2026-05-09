@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Door Kicker Debug</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div id="ui-bar">
+        <button id="btn-new">New Game</button>
+        <button id="btn-execute">▶ Execute</button>
+        <button id="btn-reset">Reset Paths</button>
+        <span id="status">
+            Phase: <span id="status-phase">PLANNING</span>
+            &nbsp;|&nbsp;
+            Enemies: <span id="status-enemies">5</span>
+        </span>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <div id="hint-bar">
+        <div id="hint">青い隊員をタップして選択 → ウェイポイント設置 → Execute</div>
+    </div>
+
+    <script src="/static/js/game.js"></script>
+</body>
+</html>
