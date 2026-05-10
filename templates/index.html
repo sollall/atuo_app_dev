@@ -8,24 +8,22 @@
 </head>
 <body>
     <div id="ui-bar">
-        <button id="btn-new">New Game</button>
-        <button id="btn-execute">▶ Execute</button>
-        <button id="btn-reset">Reset Paths</button>
+        <button id="btn-new">NEW GAME</button>
+        <button id="btn-execute">▶ EXECUTE</button>
+        <button id="btn-reset">RESET PATHS</button>
+        <button id="btn-clear">CLEAR SEL</button>
         <span id="status">
-            Phase: <span id="status-phase">PLANNING</span>
-            &nbsp;|&nbsp;
-            Enemies: <span id="status-enemies">5</span>
+            <span class="label">PHASE</span><span id="status-phase">PLANNING</span>
+            &ensp;
+            <span class="label">ENEMIES</span><span id="status-enemies">6</span>
+            &ensp;
+            <span class="label">UNITS</span><span id="status-units">2</span>
         </span>
     </div>
-
     <div id="canvas-container">
         <canvas id="gameCanvas"></canvas>
     </div>
-
-    <div id="hint-bar">
-        <div id="hint">青い隊員をタップして選択 → ウェイポイント設置 → Execute</div>
-    </div>
-
+    <div id="hint-bar"><span id="hint">青い隊員をクリック/タップして選択 → ドラッグで経路を引く → ▶ EXECUTE</span></div>
     <script src="/static/js/game.js"></script>
 </body>
 </html>

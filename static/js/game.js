@@ -1,455 +1,485 @@
 'use strict';
 
-const TILE = 40;
+const TILE  = 44;
 const MAP_W = 20;
 const MAP_H = 15;
-const T = { WALL: 0, FLOOR: 1, DOOR: 2 };
+const T     = { WALL: 0, FLOOR: 1, DOOR: 2 };
 const PHASE = { PLANNING: 'planning', RUNNING: 'running', WIN: 'win', LOSE: 'lose' };
-const STATE = { IDLE: 'idle', MOVING: 'moving', ENGAGING: 'engaging', DEAD: 'dead' };
 
-// ===== MAP =====
+// 6 rooms (TL,TC,TR,BL,BC,BR) + central corridor
 const MAP = [
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    [0,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,1,1,0],
-    [0,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,1,1,0],
-    [0,1,1,1,1,2,1,1,1,1,0,1,1,1,1,1,1,1,1,0],
-    [0,1,1,1,1,0,1,1,1,1,0,1,1,1,1,1,1,1,1,0],
-    [0,0,0,0,0,0,0,2,0,0,0,0,2,0,0,0,0,0,0,0],
-    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,0],
-    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,0],
-    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,0],
-    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,1,0],
-    [0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    [0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    [0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    [0,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
+    [0,1,1,1,1,2,1,1,1,1,1,1,2,1,1,1,1,1,1,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
+    [0,0,0,2,0,0,0,0,2,0,0,0,0,0,2,0,0,0,0,0],
+    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0],
+    [0,0,0,2,0,0,0,0,2,0,0,0,0,0,2,0,0,0,0,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
+    [0,1,1,1,1,2,1,1,1,1,1,1,2,1,1,1,1,1,1,0],
+    [0,1,1,1,1,0,1,1,1,1,1,1,0,1,1,1,1,1,1,0],
     [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
 ];
 
+const ROOM_LABELS = [
+    [1,  1,  'TL'], [6,  1,  'TC'],       [13, 1,  'TR'],
+    [5,  6,  '─── CORRIDOR ───'],
+    [1, 10,  'BL (ENTRY)'],  [6, 10, 'BC'], [13, 10, 'BR'],
+];
+
+// ── helpers ──────────────────────────────────────────────────────────────────
 function isPassable(tx, ty) {
     if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return false;
     return MAP[ty][tx] !== T.WALL;
 }
 
 function hasLOS(x1, y1, x2, y2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const steps = Math.ceil(dist / (TILE * 0.4));
+    const dx = x2-x1, dy = y2-y1;
+    const steps = Math.ceil(Math.sqrt(dx*dx+dy*dy) / (TILE*0.4));
     for (let i = 1; i < steps; i++) {
-        const t = i / steps;
-        const tx = Math.floor((x1 + dx * t) / TILE);
-        const ty = Math.floor((y1 + dy * t) / TILE);
-        if (MAP[ty]?.[tx] === T.WALL) return false;
+        const t = i/steps;
+        if (MAP[Math.floor((y1+dy*t)/TILE)]?.[Math.floor((x1+dx*t)/TILE)] === T.WALL) return false;
     }
     return true;
 }
 
-function normalizeAngle(a) {
-    while (a > Math.PI) a -= 2 * Math.PI;
-    while (a < -Math.PI) a += 2 * Math.PI;
+function castRay(ox, oy, angle, maxDist) {
+    const step = 4, dx = Math.cos(angle)*step, dy = Math.sin(angle)*step;
+    let cx = ox, cy = oy;
+    for (let d = 0; d < maxDist; d += step) {
+        cx += dx; cy += dy;
+        if (MAP[Math.floor(cy/TILE)]?.[Math.floor(cx/TILE)] === T.WALL)
+            return { x: cx-dx, y: cy-dy };
+    }
+    return { x: cx, y: cy };
+}
+
+function wrap(a) {
+    while (a >  Math.PI) a -= 2*Math.PI;
+    while (a < -Math.PI) a += 2*Math.PI;
     return a;
 }
 
-// ===== ENTITIES =====
+// ── particles ─────────────────────────────────────────────────────────────────
+const particles = [];
+
+function addFlash(x, y, angle) {
+    const gx = x+Math.cos(angle)*22, gy = y+Math.sin(angle)*22;
+    particles.push({ k:'flash', x:gx, y:gy, life:6, max:6 });
+    particles.push({ k:'tracer',
+        x1:gx, y1:gy,
+        x2:x+Math.cos(angle)*130, y2:y+Math.sin(angle)*130,
+        life:4, max:4 });
+}
+
+function addBlood(x, y) {
+    for (let i = 0; i < 14; i++) {
+        const a = Math.random()*Math.PI*2, s = Math.random()*5+1;
+        particles.push({ k:'blood', x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+            r:Math.random()*5+2, life:70, max:70 });
+    }
+}
+
+function tickParticles() {
+    for (let i = particles.length-1; i >= 0; i--) {
+        const p = particles[i];
+        p.life--;
+        if (p.k === 'blood') { p.x+=p.vx; p.y+=p.vy; p.vx*=0.78; p.vy*=0.78; }
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles(ctx) {
+    for (const p of particles) {
+        const a = p.life/p.max;
+        if (p.k === 'flash') {
+            ctx.beginPath(); ctx.arc(p.x,p.y,11*a,0,Math.PI*2);
+            ctx.fillStyle = `rgba(255,230,80,${a})`; ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x,p.y,5*a,0,Math.PI*2);
+            ctx.fillStyle = `rgba(255,255,220,${a})`; ctx.fill();
+        } else if (p.k === 'tracer') {
+            ctx.beginPath(); ctx.moveTo(p.x1,p.y1); ctx.lineTo(p.x2,p.y2);
+            ctx.strokeStyle = `rgba(255,240,100,${a*0.55})`; ctx.lineWidth=1.5; ctx.stroke();
+        } else {
+            ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+            ctx.fillStyle = `rgba(140,0,0,${a*0.9})`; ctx.fill();
+        }
+    }
+}
+
+// ── entities ──────────────────────────────────────────────────────────────────
+const openedDoors = new Set();
+
 class SwatUnit {
     constructor(tx, ty) {
-        this.x = tx * TILE + TILE / 2;
-        this.y = ty * TILE + TILE / 2;
-        this.hp = 3;
-        this.maxHp = 3;
-        this.speed = 2.5;
-        this.facing = -Math.PI / 2;
-        this.state = STATE.IDLE;
-        this.path = [];
-        this.pathIndex = 0;
-        this.engageTimer = 0;
-        this.flash = 0;
+        this.x = tx*TILE+TILE/2; this.y = ty*TILE+TILE/2;
+        this.hp = 3; this.maxHp = 3;
+        this.facing = -Math.PI/2;
+        this.path = []; this.pathIdx = 0;
+        this.speed = 2.8;
+        this.state = 'idle';
+        this.engTimer = 0; this.flash = 0; this.dead = false;
     }
-
-    get dead() { return this.hp <= 0; }
-
     update(enemies) {
         if (this.dead) return;
         if (this.flash > 0) this.flash--;
-
-        const living = enemies.filter(e => !e.dead);
-
-        // Check LOS to enemies
-        for (const enemy of living) {
-            const dx = enemy.x - this.x;
-            const dy = enemy.y - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 6 * TILE && hasLOS(this.x, this.y, enemy.x, enemy.y)) {
-                this.facing = Math.atan2(dy, dx);
-                this.state = STATE.ENGAGING;
-                this.engageTimer++;
-                if (this.engageTimer >= 30) {
-                    enemy.hp--;
-                    this.engageTimer = 0;
-                    this.flash = 6;
+        for (const e of enemies) {
+            if (e.dead) continue;
+            const dx=e.x-this.x, dy=e.y-this.y, d2=dx*dx+dy*dy;
+            if (d2 < (6.5*TILE)**2 && hasLOS(this.x,this.y,e.x,e.y)) {
+                this.facing = Math.atan2(dy,dx);
+                this.state = 'engaging';
+                if (++this.engTimer >= 28) {
+                    e.hp--; addFlash(this.x,this.y,this.facing);
+                    if (e.hp<=0) { e.dead=true; addBlood(e.x,e.y); }
+                    this.engTimer=0;
                 }
                 return;
             }
         }
-
-        this.engageTimer = 0;
-
-        if (this.pathIndex < this.path.length) {
-            this.state = STATE.MOVING;
-            const wp = this.path[this.pathIndex];
-            const dx = wp.x - this.x;
-            const dy = wp.y - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < this.speed + 0.5) {
-                this.x = wp.x;
-                this.y = wp.y;
-                this.pathIndex++;
+        this.engTimer=0; this.state='moving';
+        if (this.pathIdx < this.path.length) {
+            const wp=this.path[this.pathIdx];
+            const dx=wp.x-this.x, dy=wp.y-this.y, d=Math.sqrt(dx*dx+dy*dy);
+            if (d < this.speed+0.5) {
+                this.x=wp.x; this.y=wp.y; this.pathIdx++;
+                const tx=Math.floor(this.x/TILE), ty=Math.floor(this.y/TILE);
+                if (MAP[ty]?.[tx]===T.DOOR) openedDoors.add(`${tx},${ty}`);
             } else {
-                this.facing = Math.atan2(dy, dx);
-                this.x += (dx / dist) * this.speed;
-                this.y += (dy / dist) * this.speed;
+                this.facing=Math.atan2(dy,dx);
+                this.x+=(dx/d)*this.speed; this.y+=(dy/d)*this.speed;
             }
-        } else {
-            this.state = STATE.IDLE;
-        }
+        } else { this.state='idle'; }
     }
 }
 
 class Enemy {
-    constructor(tx, ty, patrol) {
-        this.x = tx * TILE + TILE / 2;
-        this.y = ty * TILE + TILE / 2;
-        this.hp = 1;
-        this.speed = 1.0;
-        this.facing = Math.random() * Math.PI * 2;
-        this.fovAngle = Math.PI / 2;
-        this.fovRange = 5 * TILE;
-        this.patrol = (patrol || []).map(p => ({ x: p[0], y: p[1] }));
-        this.patrolIdx = 0;
-        this.alert = false;
-        this.alertTimer = 0;
-        this.shootTimer = 0;
+    constructor(tx, ty, patrol, initFacing) {
+        this.x=tx*TILE+TILE/2; this.y=ty*TILE+TILE/2;
+        this.hp=1; this.speed=1.0;
+        this.facing = initFacing ?? (Math.random()*Math.PI*2);
+        this.fovAngle=Math.PI*0.65; this.fovRange=5.5*TILE;
+        this.patrol=patrol.map(p=>({x:p[0]*TILE+TILE/2, y:p[1]*TILE+TILE/2}));
+        this.patIdx=0; this.state='patrol';
+        this.alertTimer=0; this.shootTimer=0; this.dead=false;
     }
-
-    get dead() { return this.hp <= 0; }
-
     update(units) {
         if (this.dead) return;
-        if (this.alertTimer > 0) this.alertTimer--;
-        if (this.alertTimer === 0) this.alert = false;
+        if (this.alertTimer>0 && --this.alertTimer===0) this.state='patrol';
 
-        for (const unit of units) {
-            if (unit.dead) continue;
-            const dx = unit.x - this.x;
-            const dy = unit.y - this.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < this.fovRange) {
-                const angle = Math.atan2(dy, dx);
-                const diff = Math.abs(normalizeAngle(angle - this.facing));
-                if (diff < this.fovAngle / 2 && hasLOS(this.x, this.y, unit.x, unit.y)) {
-                    this.alert = true;
-                    this.alertTimer = 90;
-                    this.shootTimer++;
-                    if (this.shootTimer >= 45) {
-                        unit.hp--;
-                        unit.flash = 10;
-                        this.shootTimer = 0;
-                    }
+        let saw=false;
+        for (const u of units) {
+            if (u.dead) continue;
+            const dx=u.x-this.x, dy=u.y-this.y, d2=dx*dx+dy*dy;
+            if (d2>this.fovRange**2) continue;
+            const diff=Math.abs(wrap(Math.atan2(dy,dx)-this.facing));
+            if (diff<this.fovAngle/2 && hasLOS(this.x,this.y,u.x,u.y)) {
+                saw=true;
+                this.state='hostile'; this.alertTimer=150;
+                this.facing=Math.atan2(dy,dx);
+                if (++this.shootTimer>=50) {
+                    u.hp--; u.flash=14; addFlash(this.x,this.y,this.facing);
+                    if (u.hp<=0) { u.dead=true; addBlood(u.x,u.y); }
+                    this.shootTimer=0;
                 }
             }
         }
+        if (!saw) this.shootTimer=0;
+        if (this.state==='hostile') return;
 
-        if (this.patrol.length === 0) return;
-        const target = this.patrol[this.patrolIdx];
-        const tx = target.x * TILE + TILE / 2;
-        const ty = target.y * TILE + TILE / 2;
-        const dx = tx - this.x;
-        const dy = ty - this.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < this.speed + 1) {
-            this.patrolIdx = (this.patrolIdx + 1) % this.patrol.length;
-        } else {
-            this.facing = Math.atan2(dy, dx);
-            this.x += (dx / dist) * this.speed;
-            this.y += (dy / dist) * this.speed;
-        }
+        if (!this.patrol.length) { this.facing+=0.006; return; }
+        const t=this.patrol[this.patIdx];
+        const dx=t.x-this.x, dy=t.y-this.y, d=Math.sqrt(dx*dx+dy*dy);
+        if (d<this.speed+1) { this.patIdx=(this.patIdx+1)%this.patrol.length; }
+        else { this.facing=Math.atan2(dy,dx); this.x+=(dx/d)*this.speed; this.y+=(dy/d)*this.speed; }
     }
 }
 
-// ===== GAME STATE =====
-const game = { phase: PHASE.PLANNING, units: [], enemies: [], selectedUnit: null };
+// ── game state ────────────────────────────────────────────────────────────────
+const game = { phase:PHASE.PLANNING, units:[], enemies:[], selectedUnit:null };
 
 function initGame() {
-    game.phase = PHASE.PLANNING;
-    game.selectedUnit = null;
-    game.units = [
-        new SwatUnit(3, 12),
-        new SwatUnit(4, 12),
-    ];
+    game.phase=PHASE.PLANNING; game.selectedUnit=null;
+    openedDoors.clear(); particles.length=0;
+    game.units = [ new SwatUnit(2,12), new SwatUnit(3,12) ];
     game.enemies = [
-        new Enemy(3, 2,  [[1,2],[4,2],[4,3],[1,3]]),
-        new Enemy(8, 2,  [[6,1],[9,1],[9,4],[6,4]]),
-        new Enemy(15, 2, [[12,1],[18,1],[18,4],[12,4]]),
-        new Enemy(8, 7,  [[1,6],[14,6],[14,9],[1,9]]),
-        new Enemy(17, 7, []),
+        new Enemy(2,  2,  [[1,1],[4,1],[4,4],[1,4]]),
+        new Enemy(9,  2,  [[6,1],[11,1],[11,4],[6,4]]),
+        new Enemy(16, 2,  [], Math.PI),
+        new Enemy(10, 7,  [[1,7],[18,7]]),
+        new Enemy(9,  12, [], Math.PI/2),
+        new Enemy(16, 12, [[13,10],[18,10],[18,13],[13,13]]),
     ];
-    game.enemies[4].facing = Math.PI;
 }
 
-function executeGame() {
-    if (game.phase === PHASE.PLANNING) game.phase = PHASE.RUNNING;
-}
+function executeGame() { if (game.phase===PHASE.PLANNING) game.phase=PHASE.RUNNING; }
 
 function resetPaths() {
-    for (const u of game.units) { u.path = []; u.pathIndex = 0; u.state = STATE.IDLE; }
-    game.selectedUnit = null;
-    if (game.phase === PHASE.RUNNING) game.phase = PHASE.PLANNING;
+    for (const u of game.units) { u.path=[]; u.pathIdx=0; u.state='idle'; }
+    game.selectedUnit=null;
+    if (game.phase===PHASE.RUNNING) game.phase=PHASE.PLANNING;
 }
 
-function updateGame() {
-    if (game.phase !== PHASE.RUNNING) return;
-    for (const u of game.units) u.update(game.enemies);
+function tickGame() {
+    if (game.phase!==PHASE.RUNNING) return;
+    tickParticles();
+    for (const u of game.units)  u.update(game.enemies);
     for (const e of game.enemies) e.update(game.units);
-
-    if (game.enemies.every(e => e.dead)) { game.phase = PHASE.WIN; return; }
-    if (game.units.every(u => u.dead))   { game.phase = PHASE.LOSE; return; }
-
-    const active = game.units.filter(u => !u.dead &&
-        (u.state === STATE.MOVING || u.state === STATE.ENGAGING || u.pathIndex < u.path.length));
-    if (active.length === 0) game.phase = PHASE.PLANNING;
+    if (game.enemies.every(e=>e.dead)) { game.phase=PHASE.WIN; return; }
+    if (game.units.every(u=>u.dead))   { game.phase=PHASE.LOSE; return; }
+    const active=game.units.filter(u=>!u.dead&&(u.state==='engaging'||u.state==='moving'||u.pathIdx<u.path.length));
+    if (!active.length) game.phase=PHASE.PLANNING;
 }
 
-// ===== RENDERER =====
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-canvas.width  = MAP_W * TILE;
-canvas.height = MAP_H * TILE;
+// ── canvas ────────────────────────────────────────────────────────────────────
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+canvas.width=MAP_W*TILE; canvas.height=MAP_H*TILE;
 
-function resizeCanvas() {
-    const cont = document.getElementById('canvas-container');
-    const scaleX = cont.clientWidth  / canvas.width;
-    const scaleY = cont.clientHeight / canvas.height;
-    const scale  = Math.min(scaleX, scaleY);
-    canvas.style.width  = (canvas.width  * scale) + 'px';
-    canvas.style.height = (canvas.height * scale) + 'px';
+function resize() {
+    const c=document.getElementById('canvas-container');
+    const s=Math.min(c.clientWidth/canvas.width, c.clientHeight/canvas.height);
+    canvas.style.width=(canvas.width*s)+'px'; canvas.style.height=(canvas.height*s)+'px';
 }
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', resize);
 
+// ── render ────────────────────────────────────────────────────────────────────
 function drawMap() {
-    for (let ty = 0; ty < MAP_H; ty++) {
-        for (let tx = 0; tx < MAP_W; tx++) {
-            const tile = MAP[ty][tx];
-            const px = tx * TILE, py = ty * TILE;
-            if (tile === T.FLOOR) {
-                ctx.fillStyle = '#1e2d50';
-                ctx.fillRect(px, py, TILE, TILE);
-                ctx.strokeStyle = '#283a63';
-                ctx.lineWidth = 0.5;
-                ctx.strokeRect(px, py, TILE, TILE);
-            } else if (tile === T.DOOR) {
-                ctx.fillStyle = '#1e2d50';
-                ctx.fillRect(px, py, TILE, TILE);
-                ctx.fillStyle = '#7a5c10';
-                ctx.fillRect(px + 4, py + 4, TILE - 8, TILE - 8);
-                ctx.fillStyle = '#c49a1e';
-                ctx.fillRect(px + 9, py + 9, TILE - 18, TILE - 18);
+    ctx.fillStyle='#080c12'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    for (let ty=0;ty<MAP_H;ty++) for (let tx=0;tx<MAP_W;tx++) {
+        const tile=MAP[ty][tx], px=tx*TILE, py=ty*TILE;
+        if (tile===T.FLOOR) {
+            ctx.fillStyle='#121b2e'; ctx.fillRect(px,py,TILE,TILE);
+            ctx.strokeStyle='#172238'; ctx.lineWidth=0.5; ctx.strokeRect(px,py,TILE,TILE);
+        } else if (tile===T.DOOR) {
+            ctx.fillStyle='#121b2e'; ctx.fillRect(px,py,TILE,TILE);
+            if (!openedDoors.has(`${tx},${ty}`)) {
+                ctx.fillStyle='#3d2500'; ctx.fillRect(px+3,py+3,TILE-6,TILE-6);
+                ctx.fillStyle='#7a5010'; ctx.fillRect(px+7,py+7,TILE-14,TILE-14);
+                ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,3,0,Math.PI*2);
+                ctx.fillStyle='#c8a030'; ctx.fill();
+            } else {
+                ctx.strokeStyle='#7a5010'; ctx.lineWidth=3;
+                ctx.strokeRect(px+2,py+2,TILE-4,TILE-4);
             }
         }
     }
+    // wall top-edge highlight
+    for (let ty=1;ty<MAP_H;ty++) for (let tx=0;tx<MAP_W;tx++) {
+        if (MAP[ty][tx]===T.WALL && MAP[ty-1]?.[tx]!==T.WALL) {
+            ctx.fillStyle='rgba(50,80,140,0.25)'; ctx.fillRect(tx*TILE,ty*TILE,TILE,3);
+        }
+    }
+    // room labels
+    ctx.font='bold 11px monospace'; ctx.fillStyle='rgba(50,80,140,0.55)';
+    for (const [tx,ty,text] of ROOM_LABELS) ctx.fillText(text,tx*TILE+5,ty*TILE+15);
 }
 
 function drawFOV(e) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(e.x, e.y);
-    ctx.arc(e.x, e.y, e.fovRange, e.facing - e.fovAngle / 2, e.facing + e.fovAngle / 2);
-    ctx.closePath();
-    ctx.fillStyle = e.alert ? 'rgba(255,80,0,0.22)' : 'rgba(255,210,0,0.13)';
-    ctx.fill();
-    ctx.strokeStyle = e.alert ? 'rgba(255,80,0,0.5)' : 'rgba(255,210,0,0.3)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    const {x,y,facing,fovAngle,fovRange,state}=e;
+    const rays=28, alert=state!=='patrol';
+    ctx.beginPath(); ctx.moveTo(x,y);
+    for (let i=0;i<=rays;i++) {
+        const a=facing-fovAngle/2+fovAngle*(i/rays);
+        const p=castRay(x,y,a,fovRange);
+        i===0?ctx.moveTo(x,y):null; ctx.lineTo(p.x,p.y);
+    }
+    ctx.lineTo(x,y); ctx.closePath();
+    const g=ctx.createRadialGradient(x,y,0,x,y,fovRange);
+    if (alert) { g.addColorStop(0,'rgba(255,70,0,0.38)'); g.addColorStop(1,'rgba(255,70,0,0)'); }
+    else        { g.addColorStop(0,'rgba(255,220,0,0.28)'); g.addColorStop(0.6,'rgba(255,220,0,0.10)'); g.addColorStop(1,'rgba(255,220,0,0)'); }
+    ctx.fillStyle=g; ctx.fill();
+}
+
+function drawPath(u) {
+    if (!u.path.length) return;
+    const sel=game.selectedUnit===u;
+    ctx.save(); ctx.setLineDash([7,6]);
+    ctx.strokeStyle=sel?'#00ffaa':'#2277ff'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(u.x,u.y);
+    for (let i=u.pathIdx;i<u.path.length;i++) ctx.lineTo(u.path[i].x,u.path[i].y);
+    ctx.stroke(); ctx.setLineDash([]);
+    for (let i=u.pathIdx;i<u.path.length;i++) {
+        const w=u.path[i];
+        ctx.beginPath(); ctx.arc(w.x,w.y,5,0,Math.PI*2);
+        ctx.fillStyle='#00ffaa'; ctx.fill();
+        ctx.fillStyle='#000'; ctx.font='8px monospace'; ctx.fillText(i+1,w.x-3,w.y+3);
+    }
     ctx.restore();
 }
 
-function drawPath(unit) {
-    if (unit.path.length === 0) return;
-    const isSelected = game.selectedUnit === unit;
-    ctx.save();
-    ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = isSelected ? '#00ff88' : '#3399ff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(unit.x, unit.y);
-    for (let i = unit.pathIndex; i < unit.path.length; i++) {
-        ctx.lineTo(unit.path[i].x, unit.path[i].y);
-    }
-    ctx.stroke();
-    for (let i = unit.pathIndex; i < unit.path.length; i++) {
-        ctx.beginPath();
-        ctx.arc(unit.path[i].x, unit.path[i].y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = '#00ff88';
-        ctx.fill();
-    }
+function drawOperator(u) {
+    const {x,y,facing,hp,maxHp,flash}=u;
+    const sel=game.selectedUnit===u;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(facing);
+    // shadow
+    ctx.beginPath(); ctx.ellipse(3,5,12,9,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fill();
+    // body
+    ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2);
+    ctx.fillStyle=flash>0?'#fff':'#1866e0'; ctx.fill();
+    ctx.strokeStyle=flash>0?'#fff':'#55aaff'; ctx.lineWidth=2; ctx.stroke();
+    // vest cross
+    ctx.fillStyle='rgba(0,0,100,0.45)'; ctx.fillRect(-8,-3,16,6);
+    // helmet
+    ctx.beginPath(); ctx.arc(0,-2,7.5,Math.PI,0);
+    ctx.fillStyle=flash>0?'#fff':'#0a2a50'; ctx.fill();
+    // gun + suppressor
+    ctx.fillStyle='#1a1a1a'; ctx.fillRect(9,-2,14,3);
+    ctx.fillStyle='#444';    ctx.fillRect(23,-3,4,5);
+    ctx.fillStyle='#2a2a2a'; ctx.fillRect(27,-2,7,3);
     ctx.restore();
-}
-
-function drawUnit(unit) {
-    const { x, y, facing, flash, hp, maxHp } = unit;
-    const isSel = game.selectedUnit === unit;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(facing);
-    ctx.beginPath();
-    ctx.arc(0, 0, 12, 0, Math.PI * 2);
-    ctx.fillStyle = flash > 0 ? '#ffffff' : (isSel ? '#00ff88' : '#1a88ff');
-    ctx.fill();
-    ctx.strokeStyle = isSel ? '#00ff88' : '#aaccff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(15, 0);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.restore();
-
-    for (let i = 0; i < hp; i++) {
-        ctx.fillStyle = '#00ff88';
-        ctx.fillRect(x - 10 + i * 8, y + 15, 6, 4);
-    }
-    for (let i = hp; i < maxHp; i++) {
-        ctx.fillStyle = '#444';
-        ctx.fillRect(x - 10 + i * 8, y + 15, 6, 4);
-    }
-
-    if (isSel) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, 19, 0, Math.PI * 2);
-        ctx.strokeStyle = '#00ff88';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-        ctx.restore();
+    // HP bar
+    const bw=24;
+    ctx.fillStyle='#111'; ctx.fillRect(x-bw/2,y+14,bw,4);
+    ctx.fillStyle=hp>1?'#00ee77':'#ff3300';
+    ctx.fillRect(x-bw/2,y+14,bw*(hp/maxHp),4);
+    if (sel) {
+        ctx.save(); ctx.beginPath(); ctx.arc(x,y,19,0,Math.PI*2);
+        ctx.strokeStyle='#00ffaa'; ctx.lineWidth=1.5;
+        ctx.setLineDash([4,4]); ctx.stroke(); ctx.restore();
     }
 }
 
-function drawEnemy(enemy) {
-    const { x, y, facing, alert } = enemy;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(facing);
-    ctx.beginPath();
-    ctx.arc(0, 0, 11, 0, Math.PI * 2);
-    ctx.fillStyle = alert ? '#ff6600' : '#cc2222';
-    ctx.fill();
-    ctx.strokeStyle = alert ? '#ffaa44' : '#ff6666';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(13, 0);
-    ctx.strokeStyle = '#ffcccc';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+function drawDeadOp(x,y) {
+    ctx.beginPath(); ctx.arc(x,y,10,0,Math.PI*2);
+    ctx.fillStyle='rgba(15,35,90,0.7)'; ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x+2,y+3,9,6,-0.3,0,Math.PI*2);
+    ctx.fillStyle='rgba(120,0,0,0.55)'; ctx.fill();
+}
+
+function drawEnemy(e) {
+    const {x,y,facing,state,dead}=e;
+    if (dead) {
+        ctx.beginPath(); ctx.arc(x,y,9,0,Math.PI*2);
+        ctx.fillStyle='rgba(70,0,0,0.6)'; ctx.fill();
+        ctx.beginPath(); ctx.ellipse(x+2,y+3,9,6,-0.4,0,Math.PI*2);
+        ctx.fillStyle='rgba(120,0,0,0.5)'; ctx.fill();
+        return;
+    }
+    const hostile=state==='hostile';
+    ctx.save(); ctx.translate(x,y); ctx.rotate(facing);
+    ctx.beginPath(); ctx.ellipse(3,5,11,8,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2);
+    ctx.fillStyle=hostile?'#ff2200':'#991111'; ctx.fill();
+    ctx.strokeStyle=hostile?'#ff7700':'#cc3333'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='rgba(80,0,0,0.5)'; ctx.fillRect(-7,-3,14,6);
+    ctx.beginPath(); ctx.arc(0,-2,6.5,Math.PI,0);
+    ctx.fillStyle=hostile?'#660000':'#330000'; ctx.fill();
+    ctx.fillStyle='#3a0000'; ctx.fillRect(8,-2,13,3);
     ctx.restore();
-    if (alert) {
-        ctx.font = 'bold 15px monospace';
-        ctx.fillStyle = '#ffaa00';
-        ctx.fillText('!', x - 4, y - 16);
+    if (hostile) {
+        ctx.font='bold 16px monospace'; ctx.fillStyle='#ff4400';
+        ctx.fillText('!!',x-9,y-16);
+    } else if (state==='alert') {
+        ctx.font='bold 14px monospace'; ctx.fillStyle='#ffaa00';
+        ctx.fillText('?',x-4,y-14);
     }
 }
 
-function drawOverlay(text, sub, color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 44px monospace';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2 - 10);
-    ctx.font = '20px monospace';
-    ctx.fillStyle = '#dddddd';
-    ctx.fillText(sub, canvas.width / 2, canvas.height / 2 + 35);
-    ctx.textAlign = 'left';
+function drawEngageLine(u) {
+    for (const e of game.enemies) {
+        if (e.dead||!hasLOS(u.x,u.y,e.x,e.y)) continue;
+        ctx.beginPath(); ctx.moveTo(u.x,u.y); ctx.lineTo(e.x,e.y);
+        ctx.strokeStyle='rgba(255,180,0,0.22)'; ctx.lineWidth=1; ctx.stroke();
+    }
+}
+
+function drawOverlay(title,sub,bg) {
+    ctx.fillStyle=bg; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign='center'; ctx.shadowColor='#000'; ctx.shadowBlur=12;
+    ctx.font=`bold ${Math.floor(TILE*1.1)}px monospace`;
+    ctx.fillStyle='#fff'; ctx.fillText(title,canvas.width/2,canvas.height/2-8);
+    ctx.font=`${Math.floor(TILE*0.5)}px monospace`;
+    ctx.fillStyle='#ddd'; ctx.fillText(sub,canvas.width/2,canvas.height/2+40);
+    ctx.shadowBlur=0; ctx.textAlign='left';
 }
 
 function render() {
-    ctx.fillStyle = '#0a0f1e';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
     drawMap();
     for (const e of game.enemies) if (!e.dead) drawFOV(e);
-    for (const u of game.units) if (!u.dead) drawPath(u);
+    for (const u of game.units)   if (!u.dead) drawPath(u);
+    // engage lines
+    if (game.phase===PHASE.RUNNING)
+        for (const u of game.units) if (!u.dead&&u.state==='engaging') drawEngageLine(u);
+    // dead first (under living)
+    for (const e of game.enemies) if (e.dead) drawEnemy(e);
+    for (const u of game.units)   if (u.dead) drawDeadOp(u.x,u.y);
+    drawParticles(ctx);
     for (const e of game.enemies) if (!e.dead) drawEnemy(e);
-    for (const u of game.units) if (!u.dead) drawUnit(u);
-
-    if (game.phase === PHASE.WIN)  drawOverlay('MISSION COMPLETE', '全敵兵を排除しました', 'rgba(0,160,80,0.75)');
-    if (game.phase === PHASE.LOSE) drawOverlay('MISSION FAILED',   '隊員が全滅しました',   'rgba(180,0,0,0.75)');
-
+    for (const u of game.units)   if (!u.dead) drawOperator(u);
+    if (game.phase===PHASE.WIN)  drawOverlay('MISSION COMPLETE','全敵兵を排除しました','rgba(0,120,60,0.82)');
+    if (game.phase===PHASE.LOSE) drawOverlay('MISSION FAILED','隊員が全滅しました','rgba(140,0,0,0.82)');
     updateUI();
 }
 
 function updateUI() {
-    const alive = game.enemies.filter(e => !e.dead).length;
-    document.getElementById('status-phase').textContent = game.phase.toUpperCase();
-    document.getElementById('status-enemies').textContent = alive;
-    const hint = document.getElementById('hint');
-    if (game.selectedUnit) {
-        hint.textContent = '隊員選択中 — フロアをタップしてウェイポイントを追加';
-    } else if (game.phase === PHASE.PLANNING) {
-        hint.textContent = '青い隊員をタップして選択 → ウェイポイント設置 → Execute';
-    } else if (game.phase === PHASE.RUNNING) {
-        hint.textContent = '実行中... 全員が経路を完了するか排除されるまで続きます';
-    } else {
-        hint.textContent = 'New Game で再挑戦';
-    }
+    const ae=game.enemies.filter(e=>!e.dead).length;
+    const au=game.units.filter(u=>!u.dead).length;
+    document.getElementById('status-phase').textContent=game.phase.toUpperCase();
+    document.getElementById('status-enemies').textContent=ae;
+    document.getElementById('status-units').textContent=au;
+    const h=document.getElementById('hint');
+    if (game.selectedUnit)              h.textContent='隊員選択中 — ドラッグで経路描画 | 右クリック/Clear で消去';
+    else if (game.phase===PHASE.PLANNING) h.textContent='青い隊員をクリック/タップして選択 → ドラッグで経路を引く → ▶ Execute';
+    else if (game.phase===PHASE.RUNNING)  h.textContent='実行中... 黄色FOVに入ると発見されます。橙/赤FOVは警戒/交戦中';
+    else                                  h.textContent='New Game で再挑戦';
 }
 
-// ===== INPUT =====
+// ── input ─────────────────────────────────────────────────────────────────────
 function getPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const sx = canvas.width  / rect.width;
-    const sy = canvas.height / rect.height;
-    const src = e.changedTouches ? e.changedTouches[0] : e;
-    return { x: (src.clientX - rect.left) * sx, y: (src.clientY - rect.top) * sy };
+    const r=canvas.getBoundingClientRect();
+    const sx=canvas.width/r.width, sy=canvas.height/r.height;
+    const s=e.changedTouches?e.changedTouches[0]:(e.touches?e.touches[0]:e);
+    return {x:(s.clientX-r.left)*sx, y:(s.clientY-r.top)*sy};
 }
 
-function handleTap(x, y) {
-    if (game.phase === PHASE.WIN || game.phase === PHASE.LOSE) return;
+let drawing=false, lastWP=null;
+const MIN_D2=(TILE*0.65)**2;
+
+function pointerDown(pos) {
+    if (game.phase===PHASE.WIN||game.phase===PHASE.LOSE) return;
     for (const u of game.units) {
         if (u.dead) continue;
-        const dx = x - u.x, dy = y - u.y;
-        if (Math.sqrt(dx * dx + dy * dy) < 22) {
-            game.selectedUnit = (game.selectedUnit === u) ? null : u;
-            return;
-        }
+        const dx=pos.x-u.x, dy=pos.y-u.y;
+        if (dx*dx+dy*dy<22**2) { game.selectedUnit=(game.selectedUnit===u)?null:u; drawing=false; return; }
     }
-    if (game.selectedUnit) {
-        const tx = Math.floor(x / TILE);
-        const ty = Math.floor(y / TILE);
-        if (isPassable(tx, ty)) {
-            game.selectedUnit.path.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 });
-        }
-    }
+    if (game.selectedUnit) { drawing=true; lastWP=pos; addWP(pos); }
 }
 
-canvas.addEventListener('click',      e => { e.preventDefault(); const p = getPos(e); handleTap(p.x, p.y); });
-canvas.addEventListener('touchend',   e => { e.preventDefault(); const p = getPos(e); handleTap(p.x, p.y); }, { passive: false });
-canvas.addEventListener('touchstart', e => { e.preventDefault(); }, { passive: false });
+function addWP(pos) {
+    const tx=Math.floor(pos.x/TILE), ty=Math.floor(pos.y/TILE);
+    if (isPassable(tx,ty)) game.selectedUnit.path.push({x:tx*TILE+TILE/2,y:ty*TILE+TILE/2});
+}
+
+function pointerMove(pos) {
+    if (!drawing||!game.selectedUnit) return;
+    const dx=pos.x-lastWP.x, dy=pos.y-lastWP.y;
+    if (dx*dx+dy*dy>=MIN_D2) { addWP(pos); lastWP=pos; }
+}
+
+function clearSelectedPath() {
+    if (game.selectedUnit) { game.selectedUnit.path=[]; game.selectedUnit.pathIdx=0; }
+}
+
+canvas.addEventListener('mousedown',   e=>{e.preventDefault();pointerDown(getPos(e));});
+canvas.addEventListener('mousemove',   e=>{if(e.buttons)pointerMove(getPos(e));});
+canvas.addEventListener('mouseup',     ()=>{drawing=false;});
+canvas.addEventListener('contextmenu', e=>{e.preventDefault();clearSelectedPath();});
+canvas.addEventListener('touchstart',  e=>{e.preventDefault();pointerDown(getPos(e));},{passive:false});
+canvas.addEventListener('touchmove',   e=>{e.preventDefault();pointerMove(getPos(e));},{passive:false});
+canvas.addEventListener('touchend',    e=>{e.preventDefault();drawing=false;},{passive:false});
 
 document.getElementById('btn-execute').addEventListener('click', executeGame);
 document.getElementById('btn-reset').addEventListener('click', resetPaths);
+document.getElementById('btn-clear').addEventListener('click', clearSelectedPath);
 document.getElementById('btn-new').addEventListener('click', initGame);
 
-// ===== LOOP =====
-function loop() {
-    updateGame();
-    render();
-    requestAnimationFrame(loop);
-}
-
-initGame();
-resizeCanvas();
-loop();
+// ── loop ──────────────────────────────────────────────────────────────────────
+function loop() { tickGame(); render(); requestAnimationFrame(loop); }
+initGame(); resize(); loop();
