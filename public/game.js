@@ -247,6 +247,29 @@ class Enemy {
 // ── State ──────────────────────────────────────────────────────────────────
 let units=[], enemies=[], bullets=[], flashes=[];
 let selectedUnit=null;
+let selectedDoor=null;   // door whose stack menu is open
+
+// ── Door stack positions ───────────────────────────────────────────────────
+// Returns {left, right} world positions beside a horizontal door,
+// on the south (lower) side — the typical approach side.
+function getStackPositions(d) {
+  const margin = 20;           // distance from door edge to stack centre
+  const wallMid = d.y + d.h/2;
+  const below   = wallMid + margin;
+  const left    = { x: d.x        - margin, y: below,
+                    faceAngle: Math.atan2(wallMid - below, (d.x + d.w/2) - (d.x - margin)) };
+  const right   = { x: d.x + d.w + margin, y: below,
+                    faceAngle: Math.atan2(wallMid - below, (d.x + d.w/2) - (d.x + d.w + margin)) };
+  return { left, right };
+}
+
+function nearestDoor(x, y) {
+  for (const d of DOORS) {
+    const cx=d.x+d.w/2, cy=d.y+d.h/2;
+    if (Math.abs(x-cx) < d.w/2+18 && Math.abs(y-cy) < d.h/2+18) return d;
+  }
+  return null;
+}
 
 function selectUnit(u) {
   units.forEach(v=>v.selected=false);
@@ -309,11 +332,31 @@ function nearestUnit(x,y) {
 
 function ptrDown(x,y) {
   if (gameState!=='PLANNING') return;
-  const hit=nearestUnit(x,y);
-  if (hit) {
-    selectUnit(hit);
-    drawing=false; lastDraw=null;
-  } else if (selectedUnit) {
+
+  // 1) unit tap → select
+  const hitUnit=nearestUnit(x,y);
+  if (hitUnit) { selectUnit(hitUnit); selectedDoor=null; drawing=false; lastDraw=null; return; }
+
+  // 2) stack position tap → add waypoint
+  if (selectedDoor && selectedUnit) {
+    const {left,right}=getStackPositions(selectedDoor);
+    for (const pos of [left,right]) {
+      if (dist(x,y,pos.x,pos.y)<28) {
+        if (!pointBlocked(pos.x,pos.y))
+          selectedUnit.wp.push({x:pos.x, y:pos.y, faceAngle:pos.faceAngle});
+        selectedDoor=null;
+        return;
+      }
+    }
+  }
+
+  // 3) door tap → open stack menu
+  const hitDoor=nearestDoor(x,y);
+  if (hitDoor) { selectedDoor=hitDoor; return; }
+
+  // 4) empty space → draw path
+  selectedDoor=null;
+  if (selectedUnit) {
     drawing=true;
     selectedUnit.wp=[];
     lastDraw={x,y};
@@ -399,7 +442,7 @@ function update(dt) {
       const wp=u.wp[0];
       const dx=wp.x-u.x, dy=wp.y-u.y;
       const d=Math.sqrt(dx*dx+dy*dy);
-      if (d<5) { u.wp.shift(); }
+      if (d<5) { if(wp.faceAngle!==undefined) u.angle=wp.faceAngle; u.wp.shift(); }
       else {
         u.angle=Math.atan2(dy,dx);
         u.state='MOVING';
@@ -529,6 +572,49 @@ function render() {
       ctx.font=`${S(9)}px monospace`;
       ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillText(d.id,S(d.x+d.w/2),S(d.y+d.h/2));
+    }
+  }
+
+  // Stack-up command menu
+  if (selectedDoor && gameState==='PLANNING' && selectedUnit) {
+    // Highlight selected door
+    ctx.strokeStyle='#ffcc00';
+    ctx.lineWidth=S(2);
+    ctx.strokeRect(S(selectedDoor.x)-S(2),S(selectedDoor.y)-S(3),S(selectedDoor.w)+S(4),S(selectedDoor.h)+S(6));
+
+    const {left,right}=getStackPositions(selectedDoor);
+    const uc=selectedUnit.color;
+    for (const [pos,label] of [[left,'◀'],[right,'▶']]) {
+      // Stack circle
+      ctx.fillStyle=uc+'55';
+      ctx.beginPath(); ctx.arc(S(pos.x),S(pos.y),S(20),0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=uc;
+      ctx.lineWidth=S(2);
+      ctx.setLineDash([S(4),S(3)]);
+      ctx.beginPath(); ctx.arc(S(pos.x),S(pos.y),S(20),0,Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Arrow toward door
+      ctx.strokeStyle='#fff';
+      ctx.lineWidth=S(2); ctx.lineCap='round';
+      const ax=Math.cos(pos.faceAngle)*S(10), ay=Math.sin(pos.faceAngle)*S(10);
+      ctx.beginPath();
+      ctx.moveTo(S(pos.x),S(pos.y));
+      ctx.lineTo(S(pos.x)+ax,S(pos.y)+ay);
+      ctx.stroke();
+
+      // Label
+      ctx.fillStyle='#fff';
+      ctx.font=`bold ${S(11)}px monospace`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(label,S(pos.x),S(pos.y));
+
+      // "STACK" tag above
+      ctx.fillStyle='rgba(0,0,0,0.7)';
+      ctx.fillRect(S(pos.x)-S(18),S(pos.y)-S(33),S(36),S(14));
+      ctx.fillStyle=uc;
+      ctx.font=`${S(9)}px monospace`;
+      ctx.fillText('STACK',S(pos.x),S(pos.y)-S(26));
     }
   }
 
@@ -842,9 +928,9 @@ function updateStatusUI() {
 
 document.getElementById('btnExecute').addEventListener('click',()=>{
   if(gameState==='PLANNING') {
+    selectedDoor=null;
     turnTimer=0;
     turnCount++;
-    // Keep remaining waypoints — unit continues from where it stopped
     gameState='EXECUTING';
     updateStatusUI();
   }
