@@ -189,7 +189,8 @@ class Unit {
     this.shotCd= 0;
     this.SHOT  = 0.35;
     this.selected = false;
-    this.breachDoor = null;
+    this.breachDoor  = null;
+    this.stackedDoor = null;   // door this unit is assigned to stack at
   }
 }
 
@@ -342,8 +343,10 @@ function ptrDown(x,y) {
     const {left,right}=getStackPositions(selectedDoor);
     for (const pos of [left,right]) {
       if (dist(x,y,pos.x,pos.y)<28) {
-        if (!pointBlocked(pos.x,pos.y))
-          selectedUnit.wp.push({x:pos.x, y:pos.y, faceAngle:pos.faceAngle});
+        if (!pointBlocked(pos.x,pos.y)) {
+          selectedUnit.wp.push({x:pos.x, y:pos.y, faceAngle:pos.faceAngle, stackDoor:selectedDoor});
+          selectedUnit.stackedDoor = selectedDoor;  // pre-reserve for coordination
+        }
         selectedDoor=null;
         return;
       }
@@ -402,25 +405,48 @@ function update(dt) {
   for (const u of units) {
     if (u.hp<=0) continue;
 
-    // Breach
+    // ── Breach in progress ──
     if (u.breachDoor) {
       u.state='BREACHING';
       u.breachDoor.progress+=dt/BREACH_TIME;
       if (u.breachDoor.progress>=1) {
-        u.breachDoor.open=true;
-        flashes.push({x:u.breachDoor.x+u.breachDoor.w/2, y:u.breachDoor.y+u.breachDoor.h/2, t:0.45});
+        const opened=u.breachDoor;
+        opened.open=true;
+        flashes.push({x:opened.x+opened.w/2, y:opened.y+opened.h/2, t:0.45});
+        // release any unit still reserved for this door
+        units.forEach(v=>{ if(v.stackedDoor===opened) v.stackedDoor=null; });
         u.breachDoor=null;
       }
       continue;
     }
 
-    // Detect approaching door
-    if (u.wp.length>0 && !u.breachDoor) {
+    // ── Stacked at door: wait until all assigned teammates are also stacked ──
+    if (u.state==='STACKED' && u.stackedDoor) {
+      if (u.stackedDoor.open) {
+        u.stackedDoor=null; u.state='IDLE';
+      } else {
+        const assigned=units.filter(v=>v.stackedDoor===u.stackedDoor && v.hp>0);
+        const allReady=assigned.every(v=>v.state==='STACKED');
+        if (allReady) {
+          // All teammates in position → synchronized breach
+          assigned.forEach(v=>{
+            v.breachDoor=u.stackedDoor;
+            v.stackedDoor=null;
+          });
+          u.stackedDoor.progress=0;
+        }
+        // else: keep waiting
+      }
+      continue;
+    }
+
+    // ── Proximity breach (non-stacked units only) ──
+    if (u.wp.length>0 && !u.breachDoor && u.state!=='STACKED') {
       const d=nearDoor(u);
       if (d) { u.breachDoor=d; d.progress=0; continue; }
     }
 
-    // Engage visible enemies
+    // ── Engage visible enemies ──
     u.shotCd=Math.max(0,u.shotCd-dt);
     let tgt=null, td=Infinity;
     for (const e of enemies) {
@@ -442,15 +468,18 @@ function update(dt) {
       const wp=u.wp[0];
       const dx=wp.x-u.x, dy=wp.y-u.y;
       const d=Math.sqrt(dx*dx+dy*dy);
-      if (d<5) { if(wp.faceAngle!==undefined) u.angle=wp.faceAngle; u.wp.shift(); }
-      else {
+      if (d<5) {
+        if(wp.faceAngle!==undefined) u.angle=wp.faceAngle;
+        if(wp.stackDoor && !wp.stackDoor.open) u.state='STACKED';
+        u.wp.shift();
+      } else {
         u.angle=Math.atan2(dy,dx);
         u.state='MOVING';
         const step=Math.min(u.speed*dt,d);
         const nx=u.x+(dx/d)*step, ny=u.y+(dy/d)*step;
-        if      (!circleBlocked(nx,ny,u.r))      { u.x=nx; u.y=ny; }
-        else if (!circleBlocked(nx,u.y,u.r))     { u.x=nx; }
-        else if (!circleBlocked(u.x,ny,u.r))     { u.y=ny; }
+        if      (!circleBlocked(nx,ny,u.r))  { u.x=nx; u.y=ny; }
+        else if (!circleBlocked(nx,u.y,u.r)) { u.x=nx; }
+        else if (!circleBlocked(u.x,ny,u.r)) { u.y=ny; }
       }
     } else { u.state='IDLE'; }
   }
@@ -803,6 +832,23 @@ function render() {
     ctx.fillStyle='#111'; ctx.fillRect(S(u.x)-bw/2,S(u.y+u.r+4),bw,bh);
     ctx.fillStyle=u.hp>50?'#00cc66':u.hp>25?'#ffaa00':'#ff4444';
     ctx.fillRect(S(u.x)-bw/2,S(u.y+u.r+4),bw*u.hp/100,bh);
+
+    // STACKED: pulsing ring + WAIT badge
+    if (u.state==='STACKED') {
+      const pulse=0.55+0.45*Math.sin(Date.now()*0.005);
+      ctx.save(); ctx.globalAlpha=pulse;
+      ctx.strokeStyle='#ffcc00'; ctx.lineWidth=S(2);
+      ctx.setLineDash([S(4),S(3)]);
+      ctx.beginPath(); ctx.arc(S(u.x),S(u.y),S(u.r*1.9),0,Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      ctx.fillStyle='rgba(0,0,0,0.75)';
+      ctx.fillRect(S(u.x)-S(17),S(u.y-u.r-17),S(34),S(13));
+      ctx.fillStyle='#ffcc00';
+      ctx.font=`bold ${S(9)}px monospace`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('WAIT',S(u.x),S(u.y-u.r-11));
+    }
   }
 
   // Bullets
@@ -936,7 +982,11 @@ document.getElementById('btnExecute').addEventListener('click',()=>{
   }
 });
 document.getElementById('btnClear').addEventListener('click',()=>{
-  if(selectedUnit) selectedUnit.wp=[];
+  if(selectedUnit) {
+    selectedUnit.wp=[];
+    selectedUnit.stackedDoor=null;
+    if(selectedUnit.state==='STACKED') selectedUnit.state='IDLE';
+  }
 });
 document.getElementById('btnReset').addEventListener('click', initGame);
 document.getElementById('btnDebug').addEventListener('click',()=>showDebug=!showDebug);
