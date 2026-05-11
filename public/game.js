@@ -495,43 +495,81 @@ function render() {
     fov(e.x,e.y,e.angle,e.fovA,e.fovR,'#ff3333',e.state==='ALERT'?0.2:0.11);
   }
 
-  // Waypoint paths
+  // Waypoint paths with 1-second interval markers
   for (const u of units) {
     if (u.wp.length===0) continue;
+    const allPts=[{x:u.x,y:u.y},...u.wp];
+
+    // Dashed path line
     ctx.strokeStyle=u.selected?u.color+'bb':'rgba(255,255,255,0.28)';
     ctx.lineWidth=S(2.5);
-    ctx.lineCap='round';
-    ctx.lineJoin='round';
+    ctx.lineCap='round'; ctx.lineJoin='round';
     ctx.setLineDash([S(6),S(5)]);
     ctx.beginPath();
-    ctx.moveTo(S(u.x),S(u.y));
-    u.wp.forEach(p=>ctx.lineTo(S(p.x),S(p.y)));
+    allPts.forEach((p,i)=>i===0?ctx.moveTo(S(p.x),S(p.y)):ctx.lineTo(S(p.x),S(p.y)));
     ctx.stroke();
     ctx.setLineDash([]);
-    // Direction ticks along path
-    const allPts=[{x:u.x,y:u.y},...u.wp];
-    for (let i=0;i<allPts.length-1;i++) {
-      const a=allPts[i],b=allPts[i+1];
-      const steps=Math.floor(dist(a.x,a.y,b.x,b.y)/50);
+
+    // 1-second markers: walk the path accumulating distance,
+    // place a ghost + label every u.speed px (= 1 second of travel)
+    const interval = u.speed; // px per second
+    let cumDist = 0;
+    let nextMark = interval;
+    let markSec  = 1;
+
+    for (let i=0; i<allPts.length-1; i++) {
+      const a=allPts[i], b=allPts[i+1];
+      const seg=dist(a.x,a.y,b.x,b.y);
       const ang=Math.atan2(b.y-a.y,b.x-a.x);
-      for (let s=1;s<=steps;s++) {
-        const t=s/(steps+1);
+
+      while (cumDist+seg >= nextMark) {
+        const t=(nextMark-cumDist)/seg;
         const mx=a.x+(b.x-a.x)*t, my=a.y+(b.y-a.y)*t;
-        ctx.strokeStyle=u.color+'66';
-        ctx.lineWidth=S(1);
-        const pw=S(6);
+
+        // Ghost silhouette of the unit
+        ctx.save();
+        ctx.globalAlpha=0.28;
+        ctx.fillStyle=u.color;
+        ctx.beginPath(); ctx.arc(S(mx),S(my),S(u.r),0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='rgba(0,0,0,0.3)';
+        ctx.beginPath(); ctx.arc(S(mx),S(my),S(u.r*0.62),0,Math.PI*2); ctx.fill();
+        // ghost direction arrow
+        ctx.strokeStyle='rgba(255,255,255,0.7)';
+        ctx.lineWidth=S(2); ctx.lineCap='round';
         ctx.beginPath();
-        ctx.moveTo(S(mx)-Math.sin(ang)*pw, S(my)+Math.cos(ang)*pw);
-        ctx.lineTo(S(mx)+Math.sin(ang)*pw, S(my)-Math.cos(ang)*pw);
+        ctx.moveTo(S(mx),S(my));
+        ctx.lineTo(S(mx+Math.cos(ang)*u.r*1.6),S(my+Math.sin(ang)*u.r*1.6));
         ctx.stroke();
+        ctx.restore();
+
+        // Time label badge
+        ctx.save();
+        const lbl=`${markSec}s`;
+        ctx.font=`bold ${S(9)}px monospace`;
+        const tw=ctx.measureText(lbl).width+S(6);
+        const th=S(13);
+        const bx=S(mx)+S(u.r*1.1), by=S(my)-th/2;
+        ctx.fillStyle='rgba(0,0,0,0.75)';
+        ctx.fillRect(bx,by,tw,th);
+        ctx.fillStyle=u.color;
+        ctx.textAlign='left'; ctx.textBaseline='middle';
+        ctx.fillText(lbl,bx+S(3),S(my));
+        ctx.restore();
+
+        nextMark+=interval;
+        markSec++;
       }
+      cumDist+=seg;
     }
-    // End marker
+
+    // End marker (X)
     const last=u.wp[u.wp.length-1];
     ctx.strokeStyle=u.color;
     ctx.lineWidth=S(2);
+    const rx=S(5);
     ctx.beginPath();
-    ctx.arc(S(last.x),S(last.y),S(5),0,Math.PI*2);
+    ctx.moveTo(S(last.x)-rx,S(last.y)-rx); ctx.lineTo(S(last.x)+rx,S(last.y)+rx);
+    ctx.moveTo(S(last.x)+rx,S(last.y)-rx); ctx.lineTo(S(last.x)-rx,S(last.y)+rx);
     ctx.stroke();
   }
 
