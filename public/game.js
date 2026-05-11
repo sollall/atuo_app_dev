@@ -111,7 +111,8 @@ function pointBlocked(x,y) {
 }
 
 // ── Fog of war ─────────────────────────────────────────────────────────────
-const FC = 40; // fog cell size
+// 0 = never seen  1 = previously seen  2 = currently visible
+const FC = 40;
 const FCOLS = Math.ceil(WW/FC), FROWS = Math.ceil(WH/FC);
 let fog; // Uint8Array
 
@@ -119,16 +120,43 @@ function initFog() {
   fog = new Uint8Array(FCOLS * FROWS);
 }
 
-function revealFog(x, y, range) {
+// Mark cells inside a unit's FOV cone as currently visible (2)
+function markVisible(x, y, angle, fovA, range) {
   const rc = Math.ceil(range/FC);
   const cx = Math.floor(x/FC), cy = Math.floor(y/FC);
   for (let gy=Math.max(0,cy-rc); gy<=Math.min(FROWS-1,cy+rc); gy++) {
     for (let gx=Math.max(0,cx-rc); gx<=Math.min(FCOLS-1,cx+rc); gx++) {
       const wx=(gx+0.5)*FC, wy=(gy+0.5)*FC;
-      if (dist(x,y,wx,wy)<=range && !lineBlocked(x,y,wx,wy))
-        fog[gy*FCOLS+gx] = 1;
+      const dx=wx-x, dy=wy-y;
+      if (dx*dx+dy*dy > range*range) continue;
+      let diff=Math.atan2(dy,dx)-angle;
+      while(diff> Math.PI) diff-=2*Math.PI;
+      while(diff<-Math.PI) diff+=2*Math.PI;
+      if (Math.abs(diff) > fovA/2+0.05) continue;
+      if (!lineBlocked(x,y,wx,wy)) fog[gy*FCOLS+gx]=2;
     }
   }
+}
+
+// Called every frame: downgrade 2→1, then re-mark all living units' FOV
+function updateFog() {
+  for (let i=0; i<fog.length; i++) if (fog[i]===2) fog[i]=1;
+  for (const u of units) {
+    if (u.hp<=0) continue;
+    markVisible(u.x, u.y, u.angle, u.fovA, u.fovR);
+  }
+}
+
+function isVisible(x, y) {
+  const gx=Math.floor(x/FC), gy=Math.floor(y/FC);
+  if (gx<0||gy<0||gx>=FCOLS||gy>=FROWS) return false;
+  return fog[gy*FCOLS+gx]===2;
+}
+
+function wasSeen(x, y) {
+  const gx=Math.floor(x/FC), gy=Math.floor(y/FC);
+  if (gx<0||gy<0||gx>=FCOLS||gy>=FROWS) return false;
+  return fog[gy*FCOLS+gx]>=1;
 }
 
 // ── LOS ────────────────────────────────────────────────────────────────────
@@ -261,7 +289,6 @@ function initGame() {
   bullets=[]; flashes=[];
   turnTimer=0; turnCount=0;
   gameState='PLANNING';
-  for (const u of units) revealFog(u.x,u.y,160);
   updateStatusUI();
   syncUnitBtns();
 }
@@ -383,8 +410,6 @@ function update(dt) {
         else if (!circleBlocked(u.x,ny,u.r))     { u.y=ny; }
       }
     } else { u.state='IDLE'; }
-
-    revealFog(u.x,u.y,u.fovR*0.75);
   }
 
   for (const e of enemies) e.update(dt,units);
@@ -606,15 +631,17 @@ function render() {
     ctx.stroke();
   }
 
-  // Enemies
+  // Enemies — only draw if currently visible (or dead + was seen)
   for (const e of enemies) {
     if (e.state==='DEAD') {
+      if (!wasSeen(e.x,e.y)) continue;
       ctx.save(); ctx.globalAlpha=0.22;
       ctx.fillStyle='#333';
       ctx.beginPath(); ctx.arc(S(e.x),S(e.y),S(e.r),0,Math.PI*2); ctx.fill();
       ctx.restore();
       continue;
     }
+    if (!isVisible(e.x,e.y)) continue;
     const col=e.state==='ALERT'?'#ff6600':e.state==='SEARCH'?'#ffaa00':'#cc2020';
     ctx.fillStyle=col;
     ctx.beginPath(); ctx.arc(S(e.x),S(e.y),S(e.r),0,Math.PI*2); ctx.fill();
@@ -715,12 +742,20 @@ function render() {
     ctx.beginPath(); ctx.arc(S(f.x),S(f.y),S(90),0,Math.PI*2); ctx.fill();
   }
 
-  // Fog of war
+  // Fog of war overlay
+  // 0=never seen: heavy dark (map shape barely visible)
+  // 1=previously seen: light dim (map fully visible, no enemies)
+  // 2=currently visible: no overlay
   for (let gy=0;gy<FROWS;gy++) {
     for (let gx=0;gx<FCOLS;gx++) {
-      if (fog[gy*FCOLS+gx]) continue;
-      ctx.fillStyle='rgba(0,0,0,0.9)';
-      ctx.fillRect(gx*FC*SC,gy*FC*SC,FC*SC+1,FC*SC+1);
+      const s=fog[gy*FCOLS+gx];
+      if (s===0) {
+        ctx.fillStyle='rgba(0,0,0,0.84)';
+        ctx.fillRect(gx*FC*SC,gy*FC*SC,FC*SC+1,FC*SC+1);
+      } else if (s===1) {
+        ctx.fillStyle='rgba(0,0,0,0.42)';
+        ctx.fillRect(gx*FC*SC,gy*FC*SC,FC*SC+1,FC*SC+1);
+      }
     }
   }
 
@@ -828,7 +863,9 @@ document.getElementById('btnUnit2').addEventListener('click',()=>selectUnit(unit
 function loop(ts) {
   const dt=Math.min((ts-lastTime)/1000,0.05);
   lastTime=ts;
-  update(dt); render();
+  update(dt);
+  updateFog();
+  render();
   requestAnimationFrame(loop);
 }
 
