@@ -750,10 +750,10 @@ function render() {
     for (let gx=0;gx<FCOLS;gx++) {
       const s=fog[gy*FCOLS+gx];
       if (s===0) {
-        ctx.fillStyle='rgba(0,0,0,0.84)';
+        ctx.fillStyle='rgba(0,0,0,0.62)';
         ctx.fillRect(gx*FC*SC,gy*FC*SC,FC*SC+1,FC*SC+1);
       } else if (s===1) {
-        ctx.fillStyle='rgba(0,0,0,0.42)';
+        ctx.fillStyle='rgba(0,0,0,0.18)';
         ctx.fillRect(gx*FC*SC,gy*FC*SC,FC*SC+1,FC*SC+1);
       }
     }
