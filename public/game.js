@@ -223,6 +223,9 @@ let gameState='PLANNING';
 let showDebug=false;
 let fps=0,_ff=0,_ft=0,lastTime=0;
 const BREACH_DIST=32, BREACH_TIME=0.55;
+const TURN_DURATION=1.0;
+let turnTimer=0;   // counts up to TURN_DURATION during EXECUTING
+let turnCount=0;   // total turns executed
 
 function initGame() {
   _uid=0;
@@ -240,6 +243,7 @@ function initGame() {
     new Enemy(400, 275, 120, 680),
   ];
   bullets=[]; flashes=[];
+  turnTimer=0; turnCount=0;
   gameState='PLANNING';
   for (const u of units) revealFog(u.x,u.y,160);
   updateStatusUI();
@@ -303,6 +307,11 @@ function update(dt) {
   _ff++; _ft+=dt;
   if (_ft>=1) { fps=_ff; _ff=0; _ft=0; }
   if (gameState!=='EXECUTING') return;
+
+  // ── Turn timer: cap dt so we never overshoot the turn boundary ──
+  const remaining = TURN_DURATION - turnTimer;
+  dt = Math.min(dt, remaining);
+  turnTimer += dt;
 
   for (const u of units) {
     if (u.hp<=0) continue;
@@ -394,7 +403,15 @@ function update(dt) {
   flashes=flashes.filter(f=>{f.t-=dt;return f.t>0;});
 
   if (gameState==='EXECUTING' && enemies.every(e=>e.state==='DEAD')) {
-    gameState='WIN'; updateStatusUI();
+    gameState='WIN'; updateStatusUI(); return;
+  }
+
+  // ── End of turn: return to PLANNING after 1 second ──
+  if (turnTimer >= TURN_DURATION) {
+    // Consume 1 waypoint-segment's worth already moved; keep remainder
+    units.forEach(u=>{ u.state='IDLE'; });
+    gameState='PLANNING';
+    updateStatusUI();
   }
 }
 
@@ -724,6 +741,22 @@ function render() {
     ctx.fillText('Tap RESET to play again',canvas.width/2,canvas.height/2+S(42));
   }
 
+  // Turn progress bar (shown while EXECUTING)
+  if (gameState==='EXECUTING') {
+    const barH=S(6), barY=canvas.height-barH;
+    const prog=turnTimer/TURN_DURATION;
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillRect(0,barY,canvas.width,barH);
+    // Filled portion (shrinks as time passes)
+    ctx.fillStyle='#ffaa00';
+    ctx.fillRect(0,barY,canvas.width*(1-prog),barH);
+    // Remaining time label
+    ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.font=`${S(9)}px monospace`;
+    ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText(`${(TURN_DURATION-turnTimer).toFixed(2)}s`, canvas.width/2, barY-S(1));
+  }
+
   // Planning hint bar
   if (gameState==='PLANNING') {
     ctx.fillStyle='rgba(0,0,0,0.55)';
@@ -741,19 +774,32 @@ function render() {
 // ── Buttons ────────────────────────────────────────────────────────────────
 function updateStatusUI() {
   const el=document.getElementById('statusText');
-  const m={PLANNING:{t:'PLANNING',c:'#888'},EXECUTING:{t:'EXECUTING',c:'#ffaa00'},WIN:{t:'CLEAR ✓',c:'#00ff88'},LOSE:{t:'KIA',c:'#ff5555'}};
+  const m={
+    PLANNING:  {t:`TURN ${turnCount+1}  PLAN`,  c:'#888'},
+    EXECUTING: {t:`TURN ${turnCount}  GO`,       c:'#ffaa00'},
+    WIN:       {t:'CLEAR ✓',                     c:'#00ff88'},
+    LOSE:      {t:'KIA',                          c:'#ff5555'},
+  };
   const s=m[gameState]||{t:gameState,c:'#888'};
   el.textContent=s.t; el.style.color=s.c;
+
+  // Toggle EXECUTE button availability
+  const btn=document.getElementById('btnExecute');
+  btn.disabled = (gameState==='EXECUTING'||gameState==='WIN'||gameState==='LOSE');
+  btn.style.opacity = btn.disabled ? '0.35' : '1';
 }
 
 document.getElementById('btnExecute').addEventListener('click',()=>{
-  if(gameState==='PLANNING'&&units.some(u=>u.wp.length>0)){
-    gameState='EXECUTING'; updateStatusUI();
+  if(gameState==='PLANNING') {
+    turnTimer=0;
+    turnCount++;
+    // Keep remaining waypoints — unit continues from where it stopped
+    gameState='EXECUTING';
+    updateStatusUI();
   }
 });
 document.getElementById('btnClear').addEventListener('click',()=>{
   if(selectedUnit) selectedUnit.wp=[];
-  if(gameState==='EXECUTING'){gameState='PLANNING'; updateStatusUI();}
 });
 document.getElementById('btnReset').addEventListener('click', initGame);
 document.getElementById('btnDebug').addEventListener('click',()=>showDebug=!showDebug);
