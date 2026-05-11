@@ -219,6 +219,22 @@ class Enemy {
 // ── State ──────────────────────────────────────────────────────────────────
 let units=[], enemies=[], bullets=[], flashes=[];
 let selectedUnit=null;
+
+function selectUnit(u) {
+  units.forEach(v=>v.selected=false);
+  u.selected=true; selectedUnit=u;
+  syncUnitBtns();
+}
+
+function syncUnitBtns() {
+  units.forEach(u=>{
+    const btn=document.getElementById(`btnUnit${u.id}`);
+    if (!btn) return;
+    btn.classList.toggle('active', u.selected);
+    btn.style.color       = u.selected ? u.color : '';
+    btn.style.borderColor = u.selected ? u.color : '';
+  });
+}
 let gameState='PLANNING';
 let showDebug=false;
 let fps=0,_ff=0,_ft=0,lastTime=0;
@@ -247,6 +263,7 @@ function initGame() {
   gameState='PLANNING';
   for (const u of units) revealFog(u.x,u.y,160);
   updateStatusUI();
+  syncUnitBtns();
 }
 
 // ── Input ──────────────────────────────────────────────────────────────────
@@ -267,8 +284,7 @@ function ptrDown(x,y) {
   if (gameState!=='PLANNING') return;
   const hit=nearestUnit(x,y);
   if (hit) {
-    units.forEach(u=>u.selected=false);
-    hit.selected=true; selectedUnit=hit;
+    selectUnit(hit);
     drawing=false; lastDraw=null;
   } else if (selectedUnit) {
     drawing=true;
@@ -803,6 +819,10 @@ document.getElementById('btnClear').addEventListener('click',()=>{
 });
 document.getElementById('btnReset').addEventListener('click', initGame);
 document.getElementById('btnDebug').addEventListener('click',()=>showDebug=!showDebug);
+
+// ── Unit selector buttons ──────────────────────────────────────────────────
+document.getElementById('btnUnit1').addEventListener('click',()=>selectUnit(units[0]));
+document.getElementById('btnUnit2').addEventListener('click',()=>selectUnit(units[1]));
 
 // ── Loop ───────────────────────────────────────────────────────────────────
 function loop(ts) {

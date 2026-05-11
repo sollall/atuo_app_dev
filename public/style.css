@@ -55,6 +55,27 @@ header {
   display: flex;
   gap: 6px;
   width: 100%;
+  align-items: stretch;
+}
+
+#unitBtns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.btn.unit {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  color: #666;
+  border-color: #444;
+}
+.btn.unit.active {
+  background: rgba(255,255,255,0.08);
+  border-color: #aaa;
+  color: #eee;
 }
 
 .btn {
