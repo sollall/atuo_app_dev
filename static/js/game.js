@@ -64,6 +64,18 @@ function wrap(a) {
     return a;
 }
 
+// タイル座標からどの部屋IDかを返す（壁/ドアはnull）
+function getRoomId(tx, ty) {
+    if (ty >= 1  && ty <= 4  && tx >= 1  && tx <= 4)  return 'TL';
+    if (ty >= 1  && ty <= 4  && tx >= 6  && tx <= 11) return 'TC';
+    if (ty >= 1  && ty <= 4  && tx >= 13 && tx <= 18) return 'TR';
+    if (ty >= 6  && ty <= 8  && tx >= 1  && tx <= 18) return 'HALL';
+    if (ty >= 10 && ty <= 13 && tx >= 1  && tx <= 4)  return 'BL';
+    if (ty >= 10 && ty <= 13 && tx >= 6  && tx <= 11) return 'BC';
+    if (ty >= 10 && ty <= 13 && tx >= 13 && tx <= 18) return 'BR';
+    return null;
+}
+
 // ── particles ─────────────────────────────────────────────────────────────────
 const particles = [];
 
@@ -123,6 +135,7 @@ class SwatUnit {
         this.speed = 2.8;
         this.state = 'idle';
         this.engTimer = 0; this.flash = 0; this.dead = false;
+        this.room = getRoomId(tx, ty);
     }
     update(enemies) {
         if (this.dead) return;
@@ -152,6 +165,17 @@ class SwatUnit {
             } else {
                 this.facing=Math.atan2(dy,dx);
                 this.x+=(dx/d)*this.speed; this.y+=(dy/d)*this.speed;
+            }
+            // 部屋が変わったら同室の敵全員を振り向かせる
+            const newRoom = getRoomId(Math.floor(this.x/TILE), Math.floor(this.y/TILE));
+            if (newRoom && newRoom !== this.room) {
+                this.room = newRoom;
+                for (const e of enemies) {
+                    if (e.dead) continue;
+                    if (getRoomId(Math.floor(e.x/TILE), Math.floor(e.y/TILE)) === newRoom) {
+                        e.hearUnit(this);
+                    }
+                }
             }
         } else { this.state='idle'; }
     }
@@ -191,11 +215,21 @@ class Enemy {
         if (!saw) this.shootTimer=0;
         if (this.state==='hostile') return;
 
+
         if (!this.patrol.length) { this.facing+=0.006; return; }
+
         const t=this.patrol[this.patIdx];
         const dx=t.x-this.x, dy=t.y-this.y, d=Math.sqrt(dx*dx+dy*dy);
         if (d<this.speed+1) { this.patIdx=(this.patIdx+1)%this.patrol.length; }
         else { this.facing=Math.atan2(dy,dx); this.x+=(dx/d)*this.speed; this.y+=(dy/d)*this.speed; }
+    }
+    // 同じ部屋にユニットが入ってきた（音を聞いた）
+    hearUnit(unit) {
+        if (this.state === 'hostile') return; // すでに交戦中なら変えない
+        const dx = unit.x - this.x, dy = unit.y - this.y;
+        this.facing = Math.atan2(dy, dx);
+        this.state = 'alert';
+        this.alertTimer = 200; // 約3秒間 alert 状態を維持
     }
 }
 
