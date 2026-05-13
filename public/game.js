@@ -187,7 +187,7 @@ class Unit {
     this.hp    = 100;
     this.kills = 0;
     this.shotCd= 0;
-    this.SHOT  = 0.35;
+    this.SHOT  = 0.10;
     this.selected = false;
     this.breachDoor  = null;
     this.stackedDoor = null;   // door this unit is assigned to stack at
@@ -207,7 +207,7 @@ class Enemy {
     this.state='PATROL'; // PATROL ALERT SEARCH DEAD
     this.hp   = 100;
     this.shotCd=0;
-    this.SHOT =1.7;
+    this.SHOT =0.9;
     this.alertT=0;
     this.lastSeen={x,y};
   }
@@ -225,7 +225,7 @@ class Enemy {
       this.angle=Math.atan2(seen.y-this.y, seen.x-this.x);
       if (this.shotCd<=0) {
         const a=Math.atan2(seen.y-this.y,seen.x-this.x);
-        bullets.push({x:this.x,y:this.y,vx:Math.cos(a)*265,vy:Math.sin(a)*265,friendly:false,life:3});
+        bullets.push({x:this.x,y:this.y,vx:Math.cos(a)*600,vy:Math.sin(a)*600,friendly:false,life:1.5});
         this.shotCd=this.SHOT;
       }
     } else if (this.state==='ALERT') {
@@ -461,7 +461,7 @@ function update(dt) {
       u.state='ENGAGING';
       if (u.shotCd<=0) {
         const a=Math.atan2(tgt.y-u.y,tgt.x-u.x);
-        bullets.push({x:u.x,y:u.y,vx:Math.cos(a)*440,vy:Math.sin(a)*440,friendly:true,life:2});
+        bullets.push({x:u.x,y:u.y,vx:Math.cos(a)*950,vy:Math.sin(a)*950,friendly:true,life:1.5});
         u.shotCd=u.SHOT;
       }
     } else if (u.wp.length>0) {
@@ -860,7 +860,7 @@ function render() {
     ctx.lineWidth=S(1);
     ctx.beginPath();
     ctx.moveTo(S(b.x),S(b.y));
-    ctx.lineTo(S(b.x-b.vx*0.025),S(b.y-b.vy*0.025));
+    ctx.lineTo(S(b.x-b.vx*0.06),S(b.y-b.vy*0.06));
     ctx.stroke();
   }
 
